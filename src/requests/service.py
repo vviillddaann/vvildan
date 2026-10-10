@@ -122,6 +122,7 @@ async def get_user_requests(
         return page.model_copy(update={"items": items})
 
 
+# в payload данные которые
 async def create_user_request(
     user_id: int,
     payload: RequestCreateSchema,
@@ -129,9 +130,10 @@ async def create_user_request(
     city_ids = set(payload.departure_city_ids + payload.arrival_city_ids)
 
     async with async_session_maker() as session:
-        # Serialize creation for this user so concurrent submissions cannot exceed the cap.
         await session.execute(select(User.id).where(User.id == user_id).with_for_update())
+
         today = datetime.now(timezone.utc).date()
+
         if payload.date_to is None or payload.date_to >= today:
             active_count_result = await session.execute(
                 select(func.count())
@@ -139,15 +141,21 @@ async def create_user_request(
                 .where(
                     TravelRequest.user_id == user_id,
                     TravelRequest.status == RequestStatus.active,
-                    or_(TravelRequest.date_to.is_(None), TravelRequest.date_to >= today),
+                    or_(
+                        TravelRequest.date_to.is_(None),
+                        TravelRequest.date_to >= today,
+                    ),
                 )
             )
+
             active_count = active_count_result.scalar_one()
+
             if active_count >= cfg.MAX_ACTIVE_REQUESTS_PER_USER:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "You can have at most 5 active requests "
+                        f"You can have at most "
+                        f"{cfg.MAX_ACTIVE_REQUESTS_PER_USER} active requests "
                         "with no end date or an end date today or later."
                     ),
                 )
@@ -157,12 +165,17 @@ async def create_user_request(
                 select(City).where(City.id.in_(city_ids)).options(selectinload(City.country))
             )
         ).all()
+
         cities_by_id = {city.id: city for city in cities}
+
         missing_city_ids = sorted(city_ids - cities_by_id.keys())
+
         if missing_city_ids:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"missing_city_ids": missing_city_ids},
+                detail={
+                    "missing_city_ids": missing_city_ids,
+                },
             )
 
         request = TravelRequest(
@@ -170,10 +183,11 @@ async def create_user_request(
             role=payload.role,
             date_from=payload.date_from,
             date_to=payload.date_to,
-            departure_cities=[cities_by_id[id] for id in payload.departure_city_ids],
-            arrival_cities=[cities_by_id[id] for id in payload.arrival_city_ids],
+            departure_cities=[cities_by_id[city_id] for city_id in payload.departure_city_ids],
+            arrival_cities=[cities_by_id[city_id] for city_id in payload.arrival_city_ids],
             comment=payload.comment,
         )
+
         session.add(request)
         await session.commit()
 
@@ -189,9 +203,8 @@ async def create_user_request(
         from src.matches.service import notify_request_candidates
 
         await notify_request_candidates(created_request.id)
+
     except Exception:
-        # The request is already committed. Notification delivery must not make
-        # the client retry and create a duplicate request.
         logging.exception(
             "Could not notify matching candidates about request %s",
             created_request.id,
