@@ -60,13 +60,27 @@ class RequestCreateSchema(BaseModel):
     role: RequestRole
     date_from: date | None = Field(default=None, alias="dateFrom")
     date_to: date | None = Field(default=None, alias="dateTo")
-    departure_city_ids: list[int] = Field(alias="departureCityIds", min_length=1, max_length=5)
-    arrival_city_ids: list[int] = Field(alias="arrivalCityIds", min_length=1, max_length=5)
-    comment: Optional[str] = Field(None, alias="baggageComments", max_length=512)
+    departure_city_ids: list[int] = Field(
+        alias="departureCityIds",
+        min_length=1,
+        max_length=5,
+    )
+    arrival_city_ids: list[int] = Field(
+        alias="arrivalCityIds",
+        min_length=1,
+        max_length=5,
+    )
+    comment: Optional[str] = Field(
+        None,
+        alias="baggageComments",
+        max_length=512,
+    )
 
     @field_validator("comment")
     @classmethod
-    def escape_comment_html(cls, value: str) -> str:
+    def escape_comment_html(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return escape(value, quote=True)
 
     @model_validator(mode="after")
@@ -75,20 +89,26 @@ class RequestCreateSchema(BaseModel):
             self.date_from is None or self.date_to != self.date_from
         ):
             raise ValueError("courier requests require dateTo to equal dateFrom")
+
         if self.role == RequestRole.sender and self.date_from is None and self.date_to is None:
             raise ValueError("sender requests require dateFrom or dateTo")
+
         if (
             self.date_from is not None
             and self.date_to is not None
             and self.date_from > self.date_to
         ):
             raise ValueError("dateFrom must be on or before dateTo")
+
         if len(set(self.departure_city_ids)) != len(self.departure_city_ids):
             raise ValueError("departureCityIds must not contain duplicates")
+
         if len(set(self.arrival_city_ids)) != len(self.arrival_city_ids):
             raise ValueError("arrivalCityIds must not contain duplicates")
+
         if self.role == RequestRole.courier and (
             len(self.departure_city_ids) != 1 or len(self.arrival_city_ids) != 1
         ):
             raise ValueError("courier requests require one departure and one arrival city")
+
         return self
