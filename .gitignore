@@ -5,3 +5,9 @@ venv/
 ignore/
 __pycache__/
 .ruff_cache/
+data/geonames/
+# Environment files and secrets
+.env.*
+# Local database backups
+backups/*.dump
+backups/*.sql
